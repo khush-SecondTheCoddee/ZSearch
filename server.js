@@ -1,6 +1,5 @@
 const express = require('express');
 const axios = require('axios');
-const cheerio = require('cheerio');
 const path = require('path');
 
 const app = express();
@@ -15,47 +14,38 @@ app.get('/api/search', async (req, res) => {
   }
 
   try {
-    const { data } = await axios.get(
-      'https://html.duckduckgo.com/html/?q=' + encodeURIComponent(query),
-      {
-        headers: {
-          'User-Agent':
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-          'Accept-Language': 'en-US,en;q=0.9'
-        }
-      }
-    );
+    const url = 'https://en.wikipedia.org/w/api.php';
+    const response = await axios.get(url, {
+      params: {
+        action: 'query',
+        list: 'search',
+        srsearch: query,
+        format: 'json',
+        utf8: 1
+      },
+      headers: {
+        'User-Agent': 'MinimalSearchEngine/1.0 (contact@example.com)'
+      },
+      timeout: 5000
+    });
 
-    const $ = cheerio.load(data);
-    const results = [];
+    const items = response.data.query.search || [];
 
-    $('.result').each((index, element) => {
-      const title = $(element).find('.result__title a').text().trim();
-      const rawLink = $(element).find('.result__title a').attr('href');
-      const snippet = $(element).find('.result__snippet').text().trim();
-
-      let link = rawLink;
-      if (rawLink && rawLink.indexOf('uddg=') !== -1) {
-        try {
-          const parts = rawLink.split('?');
-          if (parts[1]) {
-            const urlParams = new URLSearchParams(parts[1]);
-            link = decodeURIComponent(urlParams.get('uddg'));
-          }
-        } catch (parseErr) {
-          link = rawLink;
-        }
-      }
-
-      if (title && link && link.startsWith('http')) {
-        results.push({ title: title, link: link, snippet: snippet });
-      }
+    // Format matches to fit your existing frontend
+    const results = items.map((item) => {
+      // Strip HTML span tags returned by Wikipedia snippet
+      const cleanSnippet = item.snippet.replace(/<\/?[^>]+(>|$)/g, '');
+      return {
+        title: item.title,
+        link: 'https://en.wikipedia.org/wiki/' + encodeURIComponent(item.title.replace(/ /g, '_')),
+        snippet: cleanSnippet + '...'
+      };
     });
 
     res.json(results);
   } catch (err) {
-    console.error('Scrape error:', err.message);
-    res.status(500).json({ error: 'Failed to fetch search results' });
+    console.error('Search API error:', err.message);
+    res.status(500).json({ error: 'Failed to retrieve search results' });
   }
 });
 
