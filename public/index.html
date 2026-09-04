@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Self-Hosted Search</title>
+  <style>
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      max-width: 650px;
+      margin: 40px auto;
+      padding: 0 16px;
+      color: #202124;
+    }
+    .search-container {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 24px;
+    }
+    input {
+      flex: 1;
+      padding: 10px 14px;
+      font-size: 16px;
+      border: 1px solid #dfe1e5;
+      border-radius: 24px;
+      outline: none;
+    }
+    input:focus {
+      box-shadow: 0 1px 6px rgba(32,33,36,.28);
+    }
+    button {
+      padding: 10px 18px;
+      font-size: 14px;
+      border: none;
+      background: #f8f9fa;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+    button:hover {
+      background: #f1f3f4;
+    }
+    .result {
+      margin-bottom: 20px;
+    }
+    .result h3 {
+      margin: 0 0 4px;
+      font-size: 18px;
+    }
+    .result a {
+      color: #1a0dab;
+      text-decoration: none;
+    }
+    .result a:hover {
+      text-decoration: underline;
+    }
+    .url {
+      font-size: 12px;
+      color: #202124;
+      margin-bottom: 2px;
+      word-break: break-all;
+    }
+    .snippet {
+      font-size: 14px;
+      color: #4d5156;
+      margin: 0;
+    }
+  </style>
+</head>
+<body>
+
+  <form class="search-container" id="searchForm">
+    <input type="text" id="query" placeholder="Search web..." required autofocus />
+    <button type="submit">Search</button>
+  </form>
+
+  <div id="results"></div>
+
+  <script>
+    const form = document.getElementById('searchForm');
+    const resultsContainer = document.getElementById('results');
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const query = document.getElementById('query').value.trim();
+      if (!query) return;
+
+      resultsContainer.innerHTML = '<p>Searching...</p>';
+
+      try {
+        const res = await fetch(`/api/search?q=${encodeURIComponent(query)}`);
+        const data = await res.json();
+
+        if (data.length === 0) {
+          resultsContainer.innerHTML = '<p>No results found.</p>';
+          return;
+        }
+
+        resultsContainer.innerHTML = data.map(item => `
+          <div class="result">
+            <div class="url">${item.link}</div>
+            <h3><a href="${item.link}" target="_blank" rel="noopener noreferrer">${item.title}</a></h3>
+            <p class="snippet">${item.snippet || 'No description available.'}</p>
+          </div>
+        `).join('');
+      } catch (err) {
+        resultsContainer.innerHTML = '<p>An error occurred while fetching results.</p>';
+      }
+    });
+  </script>
+</body>
+</html>
