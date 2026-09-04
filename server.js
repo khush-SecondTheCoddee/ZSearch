@@ -1,51 +1,89 @@
+const express = require('express');
+const path = require('path');
 const fs = require('fs');
-const axios = require('axios');
 
-async function importWikipedia() {
-  console.log('1. Loading Xenova/all-MiniLM-L6-v2 SLM model...');
-  const { pipeline } = await import('@xenova/transformers');
-  const embedder = await pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2');
+const app = express();
+const PORT = process.env.PORT || 3000;
 
-  console.log('2. Fetching pre-processed Simple Wikipedia articles from Hugging Face...');
-  // Streams a clean sample of Simple Wikipedia records
-  const url = 'https://datasets-server.huggingface.co/rows?dataset=Cohere%2Fwikipedia-22-12-simple-en&config=default&split=train&offset=0&limit=100';
-  
-  const response = await axios.get(url);
-  const rows = response.data.rows;
+app.use(express.static(path.join(__dirname, 'public')));
 
-  console.log(`Downloaded ${rows.length} articles. Generating vector index...`);
+let embedder = null;
+let database = [];
 
-  const database = [];
+// Load pre-compiled vector dataset
+const indexPath = path.join(__dirname, 'index.json');
+if (fs.existsSync(indexPath)) {
+  try {
+    database = JSON.parse(fs.readFileSync(indexPath, 'utf-8'));
+    console.log(`Loaded ${database.length} pre-vectorized articles from index.json`);
+  } catch (err) {
+    console.error('Error parsing index.json:', err.message);
+  }
+} else {
+  console.warn('Warning: index.json not found. Run your indexing script to populate data.');
+}
 
-  for (let i = 0; i < rows.length; i++) {
-    const item = rows[i].row;
-    const title = item.title;
-    const url = item.url;
-    // Extract first 350 characters of the summary
-    const text = (item.text || '').replace(/\s+/g, ' ').trim().slice(0, 350);
+// Normalized vector dot product for fast cosine similarity
+function dotProduct(vecA, vecB) {
+  let sum = 0;
+  for (let i = 0; i < vecA.length; i++) {
+    sum += vecA[i] * vecB[i];
+  }
+  return sum;
+}
 
-    if (!text || text.length < 50) continue;
+// Search API Endpoint
+app.get('/api/search', async (req, res) => {
+  const query = req.query.q;
+  if (!query) return res.status(400).json({ error: 'Query parameter "q" is required' });
+  if (!embedder) return res.status(503).json({ error: 'Embedding model is still loading...' });
+  if (database.length === 0) return res.status(500).json({ error: 'Database is empty. Check index.json.' });
 
-    const output = await embedder(`${title}: ${text}`, {
+  try {
+    // Generate query vector
+    const queryTensor = await embedder(query, {
       pooling: 'mean',
       normalize: true
     });
+    const queryVector = Array.from(queryTensor.data);
 
-    database.push({
-      title,
-      url,
-      snippet: text,
-      vector: Array.from(output.data)
-    });
+    // Score query against all stored vectors
+    const scored = database.map((item) => ({
+      title: item.title,
+      link: item.url,
+      snippet: item.snippet,
+      score: dotProduct(queryVector, item.vector)
+    }));
 
-    if ((i + 1) % 20 === 0) {
-      console.log(`Indexed ${i + 1}/${rows.length} pages...`);
-    }
+    // Sort descending by highest semantic similarity
+    scored.sort((a, b) => b.score - a.score);
+
+    // Return top 10 matches
+    const results = scored.slice(0, 10).map((item) => ({
+      title: item.title,
+      link: item.link,
+      snippet: `[Score: ${(item.score * 100).toFixed(1)}%] ${item.snippet}`
+    }));
+
+    res.json(results);
+  } catch (err) {
+    console.error('Search error:', err.message);
+    res.status(500).json({ error: 'Search failed' });
   }
+});
 
-  // Save compiled dataset
-  fs.writeFileSync('index.json', JSON.stringify(database));
-  console.log(`\nSuccessfully created index.json with ${database.length} pre-vectorized articles!`);
+// Server Initialization
+async function startServer() {
+  app.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
+  });
+
+  console.log('Loading Xenova/all-MiniLM-L6-v2 model into memory...');
+  const transformers = await import('@xenova/transformers');
+  embedder = await transformers.pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2');
+  console.log('Search engine ready to query!');
 }
 
-importWikipedia().catch(console.error);
+startServer().catch((err) => {
+  console.error('Failed to initialize server:', err);
+});
